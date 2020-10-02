@@ -1,0 +1,6 @@
+.ipynb_checkpoints/
+multimodal/models/runs
+**/__pycache__/*.pyc
+runs/
+ckpt/
+data/
