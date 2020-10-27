@@ -2,6 +2,15 @@ MIMIC-III Multimodal and Multitask
 =========================
 
 
+## Quick start
+1. Process data(instructions below)
+2. Define your own models under `src/model/multi_modality_model_hy.py`
+   1. You should define Encoders for each modality of Time Series, Text, and Tabular, each inheriting from `ModalityEncoder`
+   2. Define your own `MuliModalEncoder` using those models.
+   3. Define the task specific compoenets that map from the multimodal encoding to outclasses. Should inherit from `TaskSpecificComponenet`.
+   4. The above will all be instantied and used in a `MultiModalMultiTaskWrapper` in the trainig script.
+3. Instantiate your models and train! An example is given under `src/experiments/example_trainer.py`
+
 ## Structure
 ```bash
 .
@@ -24,7 +33,7 @@ MIMIC-III Multimodal and Multitask
 │      ├── phenotyping
 │      │   └── logistic
 │      └── resources
-└── multimodal
+└── src
     ├── models
     │   
     └── experiments
@@ -54,6 +63,7 @@ Their code can be found [here](https://github.com/kaggarwal/ClinicalNotesICU)
 ## Data
 All mimic-3 raw data (text and time-series) must be obtained by the user.
 ## Preprocessing the time-series data:
+Instructions and code from Harutyunyan et al.
 1. Download all data
 
 2. The following command takes MIMIC-III CSVs, generates one directory per `SUBJECT_ID` and writes ICU stay information to `data/{SUBJECT_ID}/stays.csv`, diagnoses to `data/{SUBJECT_ID}/diagnoses.csv`, and events to `data/{SUBJECT_ID}/events.csv`. This step might take around an hour.
@@ -74,13 +84,9 @@ All mimic-3 raw data (text and time-series) must be obtained by the user.
 	
 6. The following commands will generate task-specific datasets, which can later be used in models. These commands are independent, if you are going to work only on one benchmark task, you can run only the corresponding command.
 
-       python -m mimic3benchmark.scripts.create_in_hospital_mortality data/root/ data/in-hospital-mortality/
-       python -m mimic3benchmark.scripts.create_decompensation data/root/ data/decompensation/
-       python -m mimic3benchmark.scripts.create_length_of_stay data/root/ data/length-of-stay/
-       python -m mimic3benchmark.scripts.create_phenotyping data/root/ data/phenotyping/
        python -m mimic3benchmark.scripts.create_multitask data/root/ data/multitask/
 
-After the above commands are done, there will be a directory `data/{task}` for each created benchmark task.
+After the above command is done, there will be a directory `data/{task}` for each created benchmark task.
 These directories have two sub-directories: `train` and `test`.
 Each of them contains bunch of ICU stays and one file with name `listfile.csv`, which lists all samples in that particular set.
 Each row of `listfile.csv` has the following form: `icu_stay, period_length, label(s)`.
@@ -102,7 +108,7 @@ python3 scripts/extract_T0.py
 
 ## Models
 Models are defined under multimodal/models/multi_modality_model_hy.py. This files defines 
-1. base class for `ModalityEncoder` - which defines the struture of an encoder for a modality
+1. base class for `ModalityEncoder` - which defines the architecture of an encoder for a modality
 2. class `MultiModalEncoder` - which takes 3 encoders that inherit from `ModalityEncoder` and generates the global embedding
 3. base class `TaskSpecificComponent` - which defines the structure of the task specific compoenent for a given task.
 4. base class `MultiModalMultiTaskWrapper` - which combines the above classes into the full MM-MT model. This requires
@@ -113,7 +119,7 @@ Models are defined under multimodal/models/multi_modality_model_hy.py. This file
    2. A `TaskSpecificComponent` per task of interest. In this work we had six of tasks, leading to six `TaskSpecificComponenet`s.
 
 Included in multi_modality_model_hy.py are `ModailtyEncoders` for time series(`LSTMModel`), text(`Text_CNN`), and tabular(`TabularEmbedding`) data.
-Also included is our default `TaskSpecificCompoenent`, `FCTaskComponenet` which is just a FC linear layer, followed by Dropout, ReLU, and an output layer. The specific parameters per task are defined in the training script multimodal/experiments/multitasking/multitasking.py.
+Also included is our default `TaskSpecificCompoenent`, `FCTaskComponenet` which is just a FC linear layer, followed by Dropout, ReLU, and an output layer. The specific parameters per task are defined in the training script.
 
 
 ## Training
@@ -136,8 +142,12 @@ mimic3models
 * metrics.py
 * preprocessing.py
 
-## Text processing changes
+### Text processing changes
 * added extract_discharge_summary.py
 * extract_notes.py
 * extract_TO.py
 * added generate_pretrained_embeddings.py
+
+
+## License
+Work will be published under MIT License upon final release.
