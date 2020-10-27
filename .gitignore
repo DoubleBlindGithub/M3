@@ -4,3 +4,4 @@ multimodal/models/runs
 runs/
 ckpt/
 data/
+res/
