@@ -20,8 +20,9 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import StepLR
-from models.multi_modality_model_hy import Text_CNN, Text_RNN,LSTMModel, ChannelWiseLSTM, \
-     Waveform_Pretrained, MultiModal_Multitask_Model, Text_AVG, LSTMAttentionModel, Tabular_Embedding
+from models.multi_modality_model_hy import TextCNN, Text_RNN,LSTMModel, ChannelWiseLSTM, \
+     Waveform_Pretrained, MultiModal_Multitask_Model, Text_AVG, LSTMAttentionModel, TabularEmbedding, MultiModalMultiTaskWrapper, FCTaskComponent, \
+     MultiModalEncoder
 from models.loss import masked_weighted_cross_entropy_loss, masked_mse_loss
 from dataloaders import MultiModal_Dataset, custom_collate_fn
 import functools
@@ -32,17 +33,40 @@ from utils import BootStrap, BootStrapDecomp, BootStrapLos, BootStrapIhm, BootSt
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D      
 
+import torch.autograd.profiler as profiler
+
+#-----------------------Data locations ---------------------------------------------$
+conf = utils.get_config()
+args = utils.get_args()
+vectors, w2i_lookup = utils.get_embedding_dict(conf)
+#Note that some more paths are in conf
+#TODO: Move all path defentions here
+if conf.padding_type == 'Zero':
+    vectors[utils.lookup(w2i_lookup, '<pad>')] = 0
+train_val_ts_root_dir = '/home/luca/mutiltasking-for-mimic3/data/expanded_multitask/train'
+test_ts_root_dir = '/home/luca/mutiltasking-for-mimic3/data/expanded_multitask/test'
+train_val_text_root_dir = '/home/luca/mutiltasking-for-mimic3/data/root/train_text_ds/'
+test_text_root_dir = '/home/luca/mutiltasking-for-mimic3/data/root/test_text_ds/'
+train_val_tab_root_dir = '/home/luca/MultiModal-EHR/data/root/train/'
+test_tab_root_dir = '/home/luca/MultiModal-EHR/data/root/test/'
+train_listfile = '4k_train_listfile.csv'
+val_listfile = '4k_val_listfile.csv'
+test_listfile ='test_listfile.csv'
+train_val_starttime_path = conf.starttime_path_train_val
+test_starttime_path = conf.starttime_path_test
+
 #======================================Hyperparameters======================================#
 # decomp_weight = 5.0
 # los_weight = 3.0
 # ihm_weight = 3.0
 # pheno_weight = 2.0
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-decomp_weight = 0.0
-los_weight = 0.0
-ihm_weight = 0.0
-pheno_weight = 0.0
-readmit_weight = 0.0
+#If we don't care about a task, set it's weight to 0
+decomp_weight = 1.0
+los_weight = 1.0
+ihm_weight = 1.0
+pheno_weight = 1.0
+readmit_weight = 1.0
 ltm_weight = 1.0
 target_task = 'los'
 task_weight = {
@@ -85,44 +109,26 @@ readmit_class_weight = readmit_class_weight.to(device)
 #     return subset
 
 version = 1
-experiment = 'standard_lstm_text_cnn_tabular_data'#"channelwise_text_cnn_uniform_task_weights_64_hidden_lstm"
+experiment = 'refactor_experiment'#"channelwise_text_cnn_uniform_task_weights_64_hidden_lstm"
 while os.path.exists(os.path.join('runs', experiment+"_v{}".format(version))):
     version += 1
 experiment = experiment + "_v{}".format(version)
 print("Starting run {}".format(experiment))
 
 writer = SummaryWriter(os.path.join('runs', experiment))
-conf = utils.get_config()
-args = utils.get_args()
-vectors, w2i_lookup = utils.get_embedding_dict(conf)
-
-if conf.padding_type == 'Zero':
-    vectors[utils.lookup(w2i_lookup, '<pad>')] = 0
-train_val_ts_root_dir = '/home/luca/mutiltasking-for-mimic3/data/expanded_multitask/train'
-test_ts_root_dir = '/home/luca/mutiltasking-for-mimic3/data/expanded_multitask/test'
-train_val_text_root_dir = '/home/luca/mutiltasking-for-mimic3/data/root/train_text_ds/'
-test_text_root_dir = '/home/luca/mutiltasking-for-mimic3/data/root/test_text_ds/'
-train_val_tab_root_dir = '/home/luca/MultiModal-EHR/data/root/train/'
-test_tab_root_dir = '/home/luca/MultiModal-EHR/data/root/test/'
-train_listfile = '4k_train_listfile.csv'
-val_listfile = '4k_val_listfile.csv'
-test_listfile ='test_listfile.csv'
 ihm_pos = 48
 los_pos = 24
 use_ts = True
 use_text = True
 use_tab = True
 decay = 0.1
-max_text_length = 500
-max_num_notes = 150
+max_text_length = 120
+max_num_notes =  10
 regression = False
 bin_type = 'coarse'
-train_val_starttime_path = conf.starttime_path_train_val
-test_starttime_path = conf.starttime_path_test
-
 epochs = 500
 learning_rate = 1e-4
-batch_size = 4
+batch_size = 1
 bootstrap_decomp = BootStrapDecomp(k=1000, experiment_name = experiment)
 bootstrap_los = BootStrapLos(experiment_name = experiment)
 bootstrap_ihm = BootStrapIhm(experiment_name = experiment)
@@ -157,10 +163,10 @@ if normalizer_state is None:
         conf.timestep)
 normalizer.load_params(normalizer_state)
 
-# Model
+#------------------------------- Define The Encoders per modality --------------------------# 
 #ts_model = ChannelWiseLSTM(preprocess_dim =59, hidden_dim =64, layers =1, header = discretizer_header, bidirectional=False)
-ts_model = LSTMModel(input_dim = 160, hidden_dim = 256, layers =1, dropout=0.0, bidirectional= False)
-text_model = Text_CNN(in_channels=1, out_channels=128, kernel_heights =[2,3,4], embedding_length =200, name ='cnn')
+ts_model = LSTMModel(input_dim = 160, hidden_dim = 64, layers =1, dropout=0.0, bidirectional= False)
+text_model = TextCNN(in_channels=1, out_channels=16, kernel_heights =[2,3,4], embedding_length =200, name ='cnn')
 #text_model = Text_RNN(embedding_length =200, hidden_size =32, name = 'rnn')
 #text_model = Text_AVG()
 #text_model = LSTMAttentionModel(hidden_size =128,embedding_length =200, name = 'lstm attn')
@@ -172,19 +178,49 @@ text_model = Text_CNN(in_channels=1, out_channels=128, kernel_heights =[2,3,4], 
 ### Embeddings sizes need not be the same
 tab_inputs = {
     "careunit": (8, 32), 
-    "dbsource": (4, 32), 
+    "dbsource": (4, 16), 
 #    "ethnicity": (40, 32), 
     "gender": (4, 32), 
     "age": (120, 32), # Need to bin?
-    "height": (200, 32), #Need to bin?
+    "height": (100, 32), #Need to bin?
     "weight": (40, 32) #Binned by 5 kgs, should change
     }
 
 
-tab_model =  Tabular_Embedding(tab_inputs, device)
+tab_model =  TabularEmbedding(tab_inputs, device)
 
-model = MultiModal_Multitask_Model(ts_model= ts_model, text_model= text_model, tab_model=tab_model, \
-     use_ts =use_ts, use_text = use_text, use_tab = use_tab)
+#------------------------------- Declare the MultiModal Encoder --------------------------------#
+
+encoder = MultiModalEncoder(ts_model = ts_model, text_model = text_model, tab_model = tab_model)
+
+
+#------------------------------- Declare every task specific module ---------------------------#
+#TODO: Switch the losses from being computed in train to the task specific module
+global_dim = encoder.global_dim
+decomp_model = FCTaskComponent("decomp", None, global_dim, 2, hidden_size = 128)
+ihm_model = FCTaskComponent("ihm", None, global_dim, 2, hidden_size = 128)
+los_model = FCTaskComponent("los", None, global_dim, 3, hidden_size = 32)
+pheno_model = FCTaskComponent("pheno", None, global_dim, 25, hidden_size = 128)
+readmit_model = FCTaskComponent("readmit", None, global_dim, 5, hidden_size = 128)
+ltm_model = FCTaskComponent("ltm", None, global_dim, 2, hidden_size = 128)
+
+#model = MultiModal_Multitask_Model(ts_model= ts_model, text_model= text_model, tab_model=tab_model, \
+#     use_ts =use_ts, use_text = use_text, use_tab = use_tab)
+#-------------------------- The Entire MM-MT model ----------------------------#
+model = MultiModalMultiTaskWrapper(mm_encoder = encoder, \
+    decomp_model = decomp_model, ihm_model = ihm_model, los_model = los_model,
+    pheno_model = pheno_model, readmit_model = readmit_model, ltm_model = ltm_model)
+log_var = {
+    'decomp' : torch.zeros((1,), requires_grad=True, device=device),
+    'ihm'    : torch.zeros((1,), requires_grad=True, device=device),
+    'los'    : torch.zeros((1,), requires_grad=True, device=device),
+    'pheno'  : torch.zeros((1,), requires_grad=True, device=device),
+    'readmit': torch.zeros((1,), requires_grad=True, device=device),
+    'ltm': torch.zeros((1,), requires_grad=True, device=device),
+
+}
+ 
+#optimizer = torch.optim.Adam(([p for p in model.parameters()] + [log_var[t] for t in log_var if t != 'readmit']), lr=learning_rate) #for uncertainty weighting
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 scheduler = StepLR(optimizer, step_size=10, gamma=0.3)
 early_stopper = utils.EarlyStopping(experiment_name = experiment)
@@ -193,6 +229,7 @@ embedding_layer.weight.data.copy_(torch.from_numpy(vectors))
 embedding_layer.weight.requires_grad = False
 
 
+#-------------------------- Define the train/val/test dataloaders ------------#
 train_mm_dataset = MultiModal_Dataset(train_val_ts_root_dir, train_val_text_root_dir,train_val_tab_root_dir, train_listfile, discretizer, train_val_starttime_path,\
         regression, bin_type, None, ihm_pos, los_pos,  use_text, use_ts, use_tab, decay, w2i_lookup, max_text_length, max_num_notes)
 #train_mm_dataset = subsampling(train_mm_dataset)
@@ -206,6 +243,7 @@ test_mm_dataset = MultiModal_Dataset(test_ts_root_dir, test_text_root_dir,test_t
 
 
 
+#---------------------------- Load the dataset for each split ---------------#
 collate_fn_train = functools.partial(custom_collate_fn, union = True)
 collate_fn_val = functools.partial(custom_collate_fn, union = True)
 collate_fn_test = functools.partial(custom_collate_fn, union = True)
@@ -263,7 +301,9 @@ def plot_grad_flow(named_parameters):
 
 
 def text_embedding(embedding_layer,data, device):
-    
+    """
+    Embed the notes using predifed embeddings
+    """
     texts = torch.from_numpy(data['texts']).to(torch.int64)
     texts_weight_mat = torch.from_numpy(data['texts weight mat']).float()
     texts_weight_mat = texts_weight_mat.to(device)
@@ -389,6 +429,12 @@ def train(epochs, train_data_loader, test_data_loader, early_stopper, model, opt
             loss = 0.0
 
             for task in losses:
+                #-------- uncertainty weighting -----------------#
+                #prec = torch.exp(-log_var[task])
+                #losses[task] = torch.sum(losses[task] * prec + log_var[task], -1)
+                #loss += torch.sum(losses[task] * prec + log_var[task], -1)
+                #-------- end uncertainty weighting stuff -------#
+ 
                 loss += losses[task] * task_weight[task]
             
             train_b+=1
@@ -487,11 +533,11 @@ def train(epochs, train_data_loader, test_data_loader, early_stopper, model, opt
 
         #scheduler.step()
         evaluate(epoch, val_data_loader, model, 'val', early_stopper, device, train_b)
-        evaluate(epoch, test_data_loader, model, 'test', early_stopper, device, train_b)
+        #evaluate(epoch, test_data_loader, model, 'test', early_stopper, device, train_b)
         
        
-        # if early_stopper.early_stop:
-        #     evaluate(epoch, test_data_loader, model, 'test', early_stopper, device, train_b)
+        if early_stopper.early_stop:
+            evaluate(epoch, test_data_loader, model, 'test', early_stopper, device, train_b)
         #     #bootstrap_ltm.get()
         #     print("Early stopping")
         #     break
@@ -504,12 +550,15 @@ def evaluate(epoch, data_loader, model, split, early_stopper, device,  train_ste
 
     else:
         epoch_metrics = utils.EpochWriter("Test", regression, experiment)
+    '''
     if split == 'test':
         if os.path.exists('./ckpt/{}.ckpt'.format(experiment)):
             model.load_state_dict(torch.load('./ckpt/{}.ckpt'.format(experiment)))
+        model.to(device)
+
+    '''
 
 
-    model.to(device)
     model.eval()
     
 
@@ -552,9 +601,11 @@ def evaluate(epoch, data_loader, model, split, early_stopper, device,  train_ste
         else:
             tab_dict = None
 
-        decomp_logits, los_logits, ihm_logits, pheno_logits, readmit_logits, ltm_logits = model(ts = ts, texts = texts,texts_weight_mat = texts_weight_mat,\
-            tab_dict = tab_dict
-        )
+        with profiler.profile(use_cuda=True, record_shapes=True) as prof:
+            decomp_logits, los_logits, ihm_logits, pheno_logits, readmit_logits, ltm_logits = model(ts = ts, texts = texts, texts_weight_mat = texts_weight_mat,\
+                tab_dict = tab_dict
+            )
+        print(prof.key_averages().table())
 
         loss_decomp = masked_weighted_cross_entropy_loss(None, 
                                                         decomp_logits, 
@@ -586,7 +637,7 @@ def evaluate(epoch, data_loader, model, split, early_stopper, device,  train_ste
         for task in losses:
             loss += losses[task] * task_weight[task]
     
-        running_loss += loss.item()
+        running_loss += losses[target_task] * task_weight[target_task]
         running_loss_decomp += loss_decomp.item() * task_weight['decomp']
         running_loss_los +=loss_los.item()* task_weight['los']
         running_loss_ihm +=loss_ihm.item()* task_weight['ihm']

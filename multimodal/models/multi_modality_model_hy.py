@@ -5,21 +5,316 @@ from torch.nn import functional as F
 
 
 
-class LSTMModel(nn.Module):
+class TaskSpecificComponent(nn.Module):
+    """
+    Base class for a task specific component
+    Must be extended by user.
+    """
+    def __init__(self, name, loss):
+        """
+        name: str: the name of this task
+        loss: nn.Functional: the loss function to use for this task
+        """
+        super(TaskSpecificComponent, self).__init__()
+        self.name = name
+        self.loss = loss
+
+    def forward(self, x):
+        raise NotImplementedError
+
+    def get_loss(self, logits, labels):
+        """
+        Compute the loss for this Task
+        """
+        return self.loss(logits, labels)
+class FCTaskComponent(TaskSpecificComponent):
+    """
+    Default task componenet. Fully connected layer with dropout
+    """
+
+    def __init__(self, name, loss, input_dim, output_dim, hidden_size=128, dropout=0.8):
+        super(FCTaskComponent, self).__init__(name, loss)
+        self.fc_model = nn.Sequential(
+            nn.Linear(input_dim, hidden_size),
+            nn.Dropout(dropout),
+            nn.ReLU(),
+            nn.Linear(hidden_size, output_dim)
+        )
+    def forward(self, x):
+        return self.fc_model(x)
+
+class ModalityEncoder(nn.Module):
+    """
+    Base class for a modality encoder
+    Should not be instantiated on it's own
+    embedding_dim is the size of the embedding  of this modaity
+    """
+    def __init__(self, name=None, output_dim=0):
+        super(ModalityEncoder, self).__init__()
+        self.embedding_dim = output_dim
+        self.name = name
+    
+    def forward(self, x):
+        raise NotImplementedError
+
+class TabularEmbedding(ModalityEncoder):
+    def __init__(self, inputs_dict, device):
+        """
+        inputs_dict: dict of ints. Evey key is a category of embeddings. Every value 
+        is tuple of (the number of unique classes for that key, size for this embedding)
+        """
+        super(TabularEmbedding, self).__init__(name="Tabular")
+        self.embd_dict = {}
+        self.embedding_dim = 0#Embeddng lengh of all embeddings
+        for k,v in inputs_dict.items():
+            num_class, embd_size = v
+            self.embd_dict[k] = nn.Embedding(num_class, embd_size, padding_idx = 0).to(device)
+            self.embedding_dim += embd_size
+    
+    def forward(self, x_dict):
+        embds = []
+        for category in self.embd_dict:#x_dict may have more categories than we are using
+            cat_input = x_dict[category]
+            embds.append(self.embd_dict[category](cat_input))
+        return torch.cat(embds, 1)
+
+
+class LSTMModel(ModalityEncoder):
     def __init__(self, input_dim, hidden_dim, layers,dropout=0.0, bidirectional=False):
-        super(LSTMModel, self).__init__()
+        super(LSTMModel, self).__init__(name="Time Series")
         self.hidden_dim = hidden_dim
         self.layers = layers
         self.bidirectional = bidirectional
         self.lstm = nn.LSTM(input_dim, hidden_dim, layers, dropout=dropout, bidirectional =bidirectional)
+        self.embedding_dim = hidden_dim + bidirectional*hidden_dim
         
     def forward(self, x):
         out, (hn, cn) = self.lstm(x) # [seq_len, batch, hidden size]
         return out
 
+class TextCNN(ModalityEncoder):
+    def __init__(self, in_channels, out_channels, kernel_heights, embedding_length, name ='cnn'):
+        super(TextCNN, self).__init__(name="cnn")
+        
+        """
+        Arguments
+        ---------
+        in_channels : Number of input channels. Here it is 1 as the input data has dimension = (batch_size, num_seq, embedding_length)
+        out_channels : Number of output channels after convolution operation performed on the input matrix
+        kernel_heights : A list consisting of 3 different kernel_heights. Convolution will be performed 3 times and finally results from each kernel_height will be concatenated.
+        embedding_length : Embedding dimension of GloVe word embeddings
+        --------
+        """
+        
+        self.name = name
+        self.embedding_length = embedding_length
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_heights = kernel_heights
+        self.conv1 = nn.Conv2d(in_channels, out_channels, (kernel_heights[0], embedding_length), stride=1, padding=0)
+        self.conv2 = nn.Conv2d(in_channels, out_channels, (kernel_heights[1], embedding_length), stride=1, padding=0)
+        self.conv3 = nn.Conv2d(in_channels, out_channels, (kernel_heights[2], embedding_length), stride=1, padding=0)
+        self.Dropout = nn.Dropout(0.1)
+        self.embedding_dim = out_channels * 3
+        
+        
+    def conv_block(self, x, conv_layer):
+        conv_out = conv_layer(x)# conv_out.size() = (batch_size, out_channels, dim, 1)
+        activation = F.relu(conv_out.squeeze(3))# activation.size() = (batch_size, out_channels, dim)
+        max_out = F.max_pool1d(activation, activation.shape[2]).squeeze(2)# maxpool_out.size() = (batch_size, out_channels)
+    
+
+        return max_out
+    
+    def forward(self, x):
+        # x shape [batch_size, num_doc, sen_len, emb_dim]
+        res = []
+        #print(x.shape[1])
+        for i in range(x.shape[1]):
+            # i is the number of docs in this batch 
+            # input.size() = (batch_size, num_seq, embedding_length)
+            x_i = x[:,i,:,:].unsqueeze(1) #(batch_size, 1, len_seq, embedding_length)
+            max_out1 = self.conv_block(x_i, self.conv1) # [batch_size, out_channel]
+            #print('max_out shape', max_out1.shape)
+            max_out2 = self.conv_block(x_i, self.conv2)
+            #print('max_out 2 shape', max_out2.shape)
+            max_out3 = self.conv_block(x_i, self.conv3)
+            text_features = torch.cat((max_out1, max_out2, max_out3), 1) # [batch_size, out_channel*3]
+            #text_features = max_out1+max_out2+max_out3
+            #print(text_features)
+            text_features = self.Dropout(text_features)
+            res.append(text_features)  
+        res = torch.stack(res, dim =1) #[batch_size, num_doc, 768]
+        #print(res.shape)
+        return res
+
+
+
+
+class MultiModalEncoder(nn.Module):
+    """
+    The Multimodal encoder
+    Has an encoder per each modality(time seriest(ts), text, and tabular(tab))
+    Each encoder should inherit from ModalityEncoder or be None if that 
+    modality isn't used
+    """
+    def __init__(self, ts_model, text_model, tab_model):
+        super(MultiModalEncoder, self).__init__()
+        self.ts_model = ts_model
+        self.text_model = text_model
+        self.tab_model = tab_model
+        self.global_dim = 0
+        if ts_model is not None:
+            self.global_dim += self.ts_model.embedding_dim
+        if text_model is not None:
+            self.global_dim += self.text_model.embedding_dim
+        if tab_model is not None:
+            self.global_dim += self.tab_model.embedding_dim
+    
+    def combine(self, embeddings):
+        """
+        Combine all the modal embeddings into one tensor. By default just a concatentation
+        embeddings: list: list of all embeddings, [ts_embd, text_embd, tab_embd]. Elements of list
+                          are null if they are not used(no model is provided to encode that modality)
+        """
+        embeddings = list(filter(lambda x: x is not None, embeddings))
+        assert len(embeddings) > 0, "No modality embeddings available"
+        return torch.cat(embeddings, dim=1)
+    
+    def forward(self, ts =None, texts =None, texts_weight_mat =None, tab_dict = None):
+        ts_output = None
+        texts_output = None
+        tab_output = None
+        t = None
+
+        if ts is not None:
+            batch_size = ts.shape[1]
+            t = ts.shape[0]
+        
+        if texts_weight_mat is not None:
+            batch_size = texts_weight_mat.shape[0]
+            t = texts_weight_mat.shape[1]
+        
+        if self.ts_model is not None:
+            ts_output = self.ts_model(ts).float() # shape (seq_len, batch_size, num_directions* hidden_size)
+            ts_output = ts_output.permute(1,0,2) #[b,t, 256]
+            ts_output = ts_output.reshape(-1, ts_output.shape[-1])#[b*t, 256]
+
+            # ts_norm_layer = nn.LayerNorm(ts_output.size()[1:], elementwise_affine=False)
+            
+        
+        if self.text_model is not None: #self.use_text:
+            if self.text_model.name == 'avg':
+                texts_output = texts.reshape(-1, texts.shape[-1])
+            else:
+                assert texts_weight_mat is not None
+                texts_output = self.text_model(texts)
+                texts_output = self.batch_weighted_combination(texts_output, t, texts_weight_mat)
+                texts_output = texts_output.reshape(-1, texts_output.shape[-1]) #[b*t, 768]
+
+            text_norm_layer = nn.LayerNorm(texts_output.size()[1:], elementwise_affine=False)
+            texts_output = text_norm_layer(texts_output)
+            
+        
+        out = None
+        if self.ts_model is not None: #self.use_ts:
+            out = ts_output
+        
+        #if True: #self.use_text:
+        #    if out is None:
+        #        out = texts_output
+        #    else:
+        #        out = torch.cat((out, texts_output), dim=1)
+        
+        if self.tab_model is not None:#self.use_tab:
+            tab_out = self.tab_model(tab_dict)
+            tab_out = torch.unsqueeze(tab_out, dim=1)
+            #t = out.shape[0]//tab_out.shape[0] # b*t/b
+            if t is None:
+                t = 1
+            expanded_tab_out = tab_out.expand(-1, t, self.tab_model.embedding_dim)
+            tab_output = expanded_tab_out.reshape(-1, self.tab_model.embedding_dim)
+            #out = torch.cat((out, tab_out.reshape(-1, self.tab_model.embedding_dim)), dim=1)
+        return self.combine([ts_output, texts_output, tab_output])
+
+    def batch_weighted_combination(self, features, time, weight_mat = None):
+        res = []
+        for i in range(features.shape[0]):
+            feat_i = features[i,:,:]
+            weight_i = weight_mat[i,:,:]
+            new_feat_i = FeatureSpreadWTime(feat_i, weight_i)
+            res.append(new_feat_i)
+        res = torch.stack(res, dim=0)
+        return res
+ 
+    
+class MultiModalMultiTaskWrapper(nn.Module):
+    """
+    The Entire MM-MT Model
+    """
+    def __init__(self, mm_encoder, ihm_model, decomp_model,
+                 los_model, pheno_model, readmit_model, ltm_model):
+        super(MultiModalMultiTaskWrapper,self).__init__()
+        #--------Modalities-------------#
+        self.mm_encoder = mm_encoder
+
+        #--------Tasks-----------------#
+        self.decomp_model = decomp_model
+        self.los_model = los_model
+        self.ihm_model = ihm_model
+        self.pheno_model = pheno_model
+        self.readmit_model = readmit_model
+        self.ltm_model = ltm_model
+
+
+    def batch_weighted_combination(self, features, time, weight_mat = None):
+        res = []
+        for i in range(features.shape[0]):
+            feat_i = features[i,:,:]
+            weight_i = weight_mat[i,:,:]
+            new_feat_i = FeatureSpreadWTime(feat_i, weight_i)
+            res.append(new_feat_i)
+        res = torch.stack(res, dim=0)
+        return res
+        
+
+    def forward(self, ts =None, texts =None, texts_weight_mat =None, tab_dict = None):
+        if ts is not None:
+            batch_size = ts.shape[1]
+            t = ts.shape[0]
+        
+        if texts_weight_mat is not None:
+            batch_size = texts_weight_mat.shape[0]
+            t = texts_weight_mat.shape[1]
+ 
+        out = self.mm_encoder(ts, texts, texts_weight_mat, tab_dict)
+
+        out_copy = out.reshape(batch_size, -1, out.shape[1]) # [b, t, 1124]
+
+        #----------- Select the appropiate timepoint per task ------------#
+        ihm_out = out_copy[:, 47, :] #[b, 1124]
+        los_out = out_copy[:, 23, :] #[b, 1124]
+        pheno_out = out_copy[:, -1, :]
+        readmit_out = out_copy[:, -1, :]
+        ltm_out = out_copy[:,-1,:]
+
+        #---------- Compute logits per every task ----------------------------#
+        decomp_out = self.decomp_model(out) #[b*t, 2]
+        los_out = self.los_model(los_out) # [b*t, 10]
+        ihm_out = self.ihm_model(ihm_out)
+        pheno_out = self.pheno_model(pheno_out)
+        readmit_out = self.readmit_model(readmit_out)
+        ltm_out = self.ltm_model(ltm_out)
+
+        
+        return decomp_out, los_out, ihm_out, pheno_out, readmit_out, ltm_out
+
+
+
+
 
 class AttentionModel(nn.Module):
-    def __init__(input_dim, hidden_dim, layers,dropout=0.0, bidirectional=False):
+    def __init__(self, input_dim, hidden_dim, layers,dropout=0.0, bidirectional=False):
         super(AttentionModel, self).__init__()
         self.hidden_dim = hidden_dim
         self.layers = layers
@@ -130,6 +425,7 @@ class Text_AVG(nn.Module):
         """
         super(Text_AVG, self).__init__()
         self.name = name
+        self.embedding_dim = 200
 
     def forward(self,x):
         return x
@@ -245,84 +541,6 @@ class LSTMAttentionModel(torch.nn.Module):
         #     res.append(attn_output)
         # res = torch.stack(res, dim =1)
         # return res
-
-
-
-class Text_CNN(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_heights, embedding_length, name ='cnn'):
-        super(Text_CNN, self).__init__()
-        
-        """
-        Arguments
-        ---------
-        in_channels : Number of input channels. Here it is 1 as the input data has dimension = (batch_size, num_seq, embedding_length)
-        out_channels : Number of output channels after convolution operation performed on the input matrix
-        kernel_heights : A list consisting of 3 different kernel_heights. Convolution will be performed 3 times and finally results from each kernel_height will be concatenated.
-        embedding_length : Embedding dimension of GloVe word embeddings
-        --------
-        """
-        
-        self.name = name
-        self.embedding_length = embedding_length
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_heights = kernel_heights
-        self.conv1 = nn.Conv2d(in_channels, out_channels, (kernel_heights[0], embedding_length), stride=1, padding=0)
-        self.conv2 = nn.Conv2d(in_channels, out_channels, (kernel_heights[1], embedding_length), stride=1, padding=0)
-        self.conv3 = nn.Conv2d(in_channels, out_channels, (kernel_heights[2], embedding_length), stride=1, padding=0)
-        self.Dropout = nn.Dropout(0.1)
-        
-        
-    def conv_block(self, x, conv_layer):
-        conv_out = conv_layer(x)# conv_out.size() = (batch_size, out_channels, dim, 1)
-        activation = F.relu(conv_out.squeeze(3))# activation.size() = (batch_size, out_channels, dim)
-        max_out = F.max_pool1d(activation, activation.shape[2]).squeeze(2)# maxpool_out.size() = (batch_size, out_channels)
-    
-
-        return max_out
-    
-    def forward(self, x):
-        # x shape [batch_size, num_doc, sen_len, emb_dim]
-        res = []
-        #print(x.shape[1])
-        for i in range(x.shape[1]):
-            # i is the number of docs in this batch 
-            # input.size() = (batch_size, num_seq, embedding_length)
-            x_i = x[:,i,:,:].unsqueeze(1) #(batch_size, 1, len_seq, embedding_length)
-            max_out1 = self.conv_block(x_i, self.conv1) # [batch_size, out_channel]
-            #print('max_out shape', max_out1.shape)
-            max_out2 = self.conv_block(x_i, self.conv2)
-            #print('max_out 2 shape', max_out2.shape)
-            max_out3 = self.conv_block(x_i, self.conv3)
-            text_features = torch.cat((max_out1, max_out2, max_out3), 1) # [batch_size, out_channel*3]
-            #text_features = max_out1+max_out2+max_out3
-            #print(text_features)
-            text_features = self.Dropout(text_features)
-            res.append(text_features)  
-        res = torch.stack(res, dim =1) #[batch_size, num_doc, 768]
-        #print(res.shape)
-        return res
-
-class Tabular_Embedding(nn.Module):
-    def __init__(self, inputs_dict, device):
-        """
-        inputs_dict: dict of ints. Evey key is a category of embeddings. Every value 
-        is tuple of (the number of unique classes for that key, size for this embedding)
-        """
-        super(Tabular_Embedding, self).__init__()
-        self.embd_dict = {}
-        self.embedding_length = 0#Embeddng lengh of all embeddings
-        for k,v in inputs_dict.items():
-            num_class, embd_size = v
-            self.embd_dict[k] = nn.Embedding(num_class, embd_size, padding_idx = 0).to(device)
-            self.embedding_length += embd_size
-    
-    def forward(self, x_dict):
-        embds = []
-        for category in self.embd_dict:#x_dict may have more categories than we are using
-            cat_input = x_dict[category]
-            embds.append(self.embd_dict[category](cat_input))
-        return torch.cat(embds, 1)
 
 
 
@@ -468,7 +686,7 @@ class MultiModal_Multitask_Model(nn.Module):
             out_dim+=textout_dim
         
         if self.use_tab:
-            out_dim+= self.tab_model.embedding_length
+            out_dim+= self.tab_model.embedding_dim
       
         self.fc_decomp = nn.Sequential(
             nn.Linear(out_dim, 128),
@@ -482,27 +700,25 @@ class MultiModal_Multitask_Model(nn.Module):
             nn.ReLU(),
             nn.Linear(32, self.los_classes))
 
+
         self.fc_ihm = nn.Sequential(
-            nn.Linear(out_dim, 108),
-            nn.Dropout(0.85),
+            nn.Linear(out_dim, 64),
+            nn.Dropout(0.8),
             nn.ReLU(),
-            nn.Linear(108, self.ihm_classes))
+            nn.Linear(64, self.ihm_classes))
         
         self.fc_pheno = nn.Sequential(
             nn.Dropout(0.1),
             nn.Linear(out_dim, self.pheno_classes))
             
-        self.fc_readmit = nn.Sequential(
-            nn.Linear(out_dim, 128),
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(128, self.readmit_classes))
+            # nn.ReLU(),
+            # nn.Linear(512, self.pheno_classes))
 
-        self.fc_ltm = nn.Sequential(
-            nn.Linear(out_dim, 64),
-            nn.Dropout(0.8),
-            nn.ReLU(),
-            nn.Linear(64, self.ltm_classes))
+        self.fc_readmit = nn.Sequential(
+          
+            nn.Dropout(0.3),
+            
+            nn.Linear(out_dim, self.readmit_classes))
 
 
 
@@ -561,8 +777,8 @@ class MultiModal_Multitask_Model(nn.Module):
             tab_out = self.tab_model(tab_dict)
             tab_out = torch.unsqueeze(tab_out, dim=1)
             t = out.shape[0]//tab_out.shape[0] # b*t/b
-            append = tab_out.expand(-1, t, self.tab_model.embedding_length)
-            out = torch.cat((out, append.reshape(-1, self.tab_model.embedding_length)), dim=1)
+            append = tab_out.expand(-1, t, self.tab_model.embedding_dim)
+            out = torch.cat((out, append.reshape(-1, self.tab_model.embedding_dim)), dim=1)
 
 
         out_copy = out.reshape(batch_size, -1, out.shape[1]) # [b, t, 1124]
