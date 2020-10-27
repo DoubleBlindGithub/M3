@@ -383,7 +383,7 @@ def train(epochs, train_data_loader, test_data_loader, early_stopper, model, opt
             decomp_label, decomp_mask, los_label, los_mask, ihm_label, ihm_mask,\
                  pheno_label, readmit_label, readmit_mask, ltm_label, ltm_mask, num_valid_data = retrieve_data(data, device)
             
-            #------------------------- only load modaity if that modality is being used ----------------#
+            #------------------------- only load modality if that modality is being used ----------------#
             if use_ts:
                 ts = torch.from_numpy(data['time series'])
                 ts = ts.permute(1,0,2).float().to(device)
