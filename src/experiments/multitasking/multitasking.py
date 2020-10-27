@@ -1,6 +1,5 @@
 import numpy as np
 import pickle
-import tensorflow as tf
 import os
 import sys
 sys.path.append("../../..")
@@ -9,19 +8,19 @@ sys.path.append("..")
 import utils
 import random
 import math
-from mimic3benchmark.readers import MultitaskReader
-from mimic3models.multitask import utils as mt_utils
-from mimic3benchmark.readers import MultitaskReader
 
-from waveform.WaveformLoader import WaveformDataset
-from mimic3models.preprocessing import Discretizer, Normalizer
+from har_code.readers import MultitaskReader
+from har_code.mimic3models.multitask import utils as mt_utils
+from har_code.readers import MultitaskReader
+from har_code.mimic3models.preprocessing import Discretizer, Normalizer
+
 from text_utils import  avg_emb
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import StepLR
-from models.multi_modality_model_hy import TextCNN, Text_RNN,LSTMModel, ChannelWiseLSTM, \
-     Waveform_Pretrained, MultiModal_Multitask_Model, Text_AVG, LSTMAttentionModel, TabularEmbedding, MultiModalMultiTaskWrapper, FCTaskComponent, \
+from models.multi_modality_model_hy import TextCNN, LSTMModel, ChannelWiseLSTM, \
+     TabularEmbedding, MultiModalMultiTaskWrapper, FCTaskComponent, \
      MultiModalEncoder
 from models.loss import masked_weighted_cross_entropy_loss, masked_mse_loss
 from dataloaders import MultiModal_Dataset, custom_collate_fn
@@ -601,11 +600,9 @@ def evaluate(epoch, data_loader, model, split, early_stopper, device,  train_ste
         else:
             tab_dict = None
 
-        with profiler.profile(use_cuda=True, record_shapes=True) as prof:
-            decomp_logits, los_logits, ihm_logits, pheno_logits, readmit_logits, ltm_logits = model(ts = ts, texts = texts, texts_weight_mat = texts_weight_mat,\
-                tab_dict = tab_dict
-            )
-        print(prof.key_averages().table())
+        decomp_logits, los_logits, ihm_logits, pheno_logits, readmit_logits, ltm_logits = model(ts = ts, texts = texts, texts_weight_mat = texts_weight_mat,\
+            tab_dict = tab_dict
+        )
 
         loss_decomp = masked_weighted_cross_entropy_loss(None, 
                                                         decomp_logits, 
