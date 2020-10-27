@@ -34,19 +34,12 @@ MIMIC-III Multimodal and Multitask
 4. multimodal: the folder contains scripts to preprocess the text data and multimodal-multitasking models
 
 
-## Requirements
-
-
-- numpy
-- pandas
-
-Note: Please use pandas==0.20.3 to avoid errors in preprocessing datetimes.
-
 
 ## Data
-All mimic-3 raw data (text and time-series) is in [here]()
+All mimic-3 raw data (text and time-series) must be obtained by the user.
 
 ## Preprocessing the time-series data:
+The processing pipeline is based off of Harutyunyan 2017(https://doi.org/10.5281/zenodo.1306527)
 1. Download all data
 
 2. The following command takes MIMIC-III CSVs, generates one directory per `SUBJECT_ID` and writes ICU stay information to `data/{SUBJECT_ID}/stays.csv`, diagnoses to `data/{SUBJECT_ID}/diagnoses.csv`, and events to `data/{SUBJECT_ID}/events.csv`. This step might take around an hour.
