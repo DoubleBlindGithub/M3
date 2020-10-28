@@ -60,7 +60,7 @@ ihm_weight = 1.0
 pheno_weight = 1.0
 readmit_weight = 1.0
 ltm_weight = 1.0
-target_task = 'los'
+target_task = 'decomp'
 task_weight = {
     'decomp': decomp_weight,
     'los':    los_weight,
