@@ -145,7 +145,7 @@ def assert_shapes(X, mask, output, TimeMask = None, Texts = None):
 
 class MultiModal_Dataset(Dataset):
     def __init__(self, ts_root_dir, text_root_dir,tabular_root_dir, listfile, discretizer, starttime_path, regression, bin_type,\
-         normalizer, ihm_pos, los_pos, use_text, use_ts, use_tab, decay, w2i_lookup, max_text_length, max_num_notes):
+         normalizer, ihm_pos, ihm_gap_time, los_pos, los_gap_time, use_text, use_ts, use_tab, decay, w2i_lookup, max_text_length, max_num_notes):
         self.ts_root_dir = ts_root_dir
         self.text_root_dir = text_root_dir
         self.tabular_root_dir = tabular_root_dir
@@ -160,6 +160,8 @@ class MultiModal_Dataset(Dataset):
         self.max_num_notes = max_num_notes
         self.regression = regression
         self.bin_type = bin_type
+        self.ihm_gap_time = ihm_gap_time
+        self.los_gap_time = los_gap_time
         with open(starttime_path, 'rb') as f:
             self.episodeToStartTime = pickle.load(f)
         
@@ -631,11 +633,11 @@ class MultiModal_Dataset(Dataset):
         if self.use_ts:
             data['time series'] = X
         data['t'] = T
-        data['ihm mask'] = ihm_M
+        data['ihm mask'] = ihm_M * (T >= self.ihm_pos + self.ihm_gap_time)
         data['ihm label'] = ihm_y
         data['decomp mask'] = decomp_M
         data['decomp label'] = decomp_y
-        data['los mask'] = los_M
+        data['los mask'] = los_M * (T >= self.los_pos + self.los_lead_time)
         data['los label'] = los_y
         data['pheno label'] = pheno_y
         data['readmit mask'] = readmit_M

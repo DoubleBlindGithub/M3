@@ -42,12 +42,12 @@ vectors, w2i_lookup = utils.get_embedding_dict(conf)
 #TODO: Move all path defentions here
 if conf.padding_type == 'Zero':
     vectors[utils.lookup(w2i_lookup, '<pad>')] = 0
-train_val_ts_root_dir = '/home/luca/mutiltasking-for-mimic3/data/expanded_multitask/train'
-test_ts_root_dir = '/home/luca/mutiltasking-for-mimic3/data/expanded_multitask/test'
-train_val_text_root_dir = '/home/luca/mutiltasking-for-mimic3/data/root/train_text_ds/'
-test_text_root_dir = '/home/luca/mutiltasking-for-mimic3/data/root/test_text_ds/'
-train_val_tab_root_dir = '/home/luca/MultiModal-EHR/data/root/train/'
-test_tab_root_dir = '/home/luca/MultiModal-EHR/data/root/test/'
+train_val_ts_root_dir = '/home/m3/mutiltasking-for-mimic3/data/expanded_multitask/train'
+test_ts_root_dir = '/home/m3/mutiltasking-for-mimic3/data/expanded_multitask/test'
+train_val_text_root_dir = '/home/m3/mutiltasking-for-mimic3/data/root/train_text_ds/'
+test_text_root_dir = '/home/m3/mutiltasking-for-mimic3/data/root/test_text_ds/'
+train_val_tab_root_dir = '/home/m3/MultiModal-EHR/data/root/train/'
+test_tab_root_dir = '/home/m3/MultiModal-EHR/data/root/test/'
 train_listfile = '4k_train_listfile.csv'
 val_listfile = '4k_val_listfile.csv'
 test_listfile ='test_listfile.csv'
@@ -128,6 +128,8 @@ bin_type = 'coarse'
 epochs = 500
 learning_rate = 1e-4
 batch_size = 1
+ihm_gap_time = 0
+los_gap_time = 0
 bootstrap_decomp = BootStrapDecomp(k=1000, experiment_name = experiment)
 bootstrap_los = BootStrapLos(experiment_name = experiment)
 bootstrap_ihm = BootStrapIhm(experiment_name = experiment)
@@ -230,13 +232,13 @@ embedding_layer.weight.requires_grad = False
 
 #-------------------------- Define the train/val/test dataloaders ------------#
 train_mm_dataset = MultiModal_Dataset(train_val_ts_root_dir, train_val_text_root_dir,train_val_tab_root_dir, train_listfile, discretizer, train_val_starttime_path,\
-        regression, bin_type, None, ihm_pos, los_pos,  use_text, use_ts, use_tab, decay, w2i_lookup, max_text_length, max_num_notes)
+        regression, bin_type, None, ihm_pos, ihm_gap_time, los_pos, los_gap_time,  use_text, use_ts, use_tab, decay, w2i_lookup, max_text_length, max_num_notes)
 #train_mm_dataset = subsampling(train_mm_dataset)
 #print(len(train_mm_dataset))
 val_mm_dataset = MultiModal_Dataset(train_val_ts_root_dir, train_val_text_root_dir, train_val_tab_root_dir, val_listfile, discretizer, train_val_starttime_path,\
-        regression, bin_type, None, ihm_pos, los_pos,  use_text, use_ts, use_tab, decay, w2i_lookup, max_text_length, max_num_notes)
+        regression, bin_type, None, ihm_pos, ihm_gap_time, los_pos, los_gap_time,  use_text, use_ts, use_tab, decay, w2i_lookup, max_text_length, max_num_notes)
 test_mm_dataset = MultiModal_Dataset(test_ts_root_dir, test_text_root_dir,test_tab_root_dir, test_listfile, discretizer, test_starttime_path,\
-        regression, bin_type, None, ihm_pos, los_pos,  use_text, use_ts, use_tab, decay, w2i_lookup, max_text_length, max_num_notes)
+        regression, bin_type, None, ihm_pos, ihm_gap_time, los_pos, los_gap_time,  use_text, use_ts, use_tab, decay, w2i_lookup, max_text_length, max_num_notes)
 
 
 
