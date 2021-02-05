@@ -190,6 +190,8 @@ class MultiModalEncoder(nn.Module):
         if ts is not None:
             batch_size = ts.shape[1]
             t = ts.shape[0]
+            ts[min(24, t):,:,:] *= 0
+
         
         if texts_weight_mat is not None:
             batch_size = texts_weight_mat.shape[0]
@@ -390,7 +392,7 @@ class ChannelWiseLSTM(nn.Module):
         if bidirectional:
             self.postprocess_dim = self.postprocess_dim*2
         self.channels = channels
-        print(self.channels)
+        self.embedding_dim = hidden_dim
 
         self.preprocess_lstm = nn.ModuleList()
         for i in range(len(self.channels)):
