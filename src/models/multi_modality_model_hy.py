@@ -190,7 +190,7 @@ class MultiModalEncoder(nn.Module):
         if ts is not None:
             batch_size = ts.shape[1]
             t = ts.shape[0]
-            ts[min(24, t):,:,:] *= 0
+            #ts[min(24, t):,:,:] *= 0#Ad Hoc masking for BiLSTM
 
         
         if texts_weight_mat is not None:
