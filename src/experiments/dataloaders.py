@@ -637,7 +637,7 @@ class MultiModal_Dataset(Dataset):
         data['ihm label'] = ihm_y
         data['decomp mask'] = decomp_M
         data['decomp label'] = decomp_y
-        data['los mask'] = los_M * (T >= self.los_pos + self.los_lead_time)
+        data['los mask'] = los_M * (T >= self.los_pos + self.los_gap_time)
         data['los label'] = los_y
         data['pheno label'] = pheno_y
         data['readmit mask'] = readmit_M
