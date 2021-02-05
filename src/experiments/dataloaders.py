@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 import utils
 import pickle
 from mimic3benchmark.readers import MultitaskReader
-from mimic3models.preprocessing import Discretizer, Normalizer
+from har_code.mimic3models.preprocessing import Discretizer, Normalizer
 import time
 import functools
 import json
