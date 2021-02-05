@@ -4,7 +4,7 @@ import numpy as np
 import json
 from utils import lookup
 import pandas as pd
-from models.multi_modality_model import FeatureSpreadWTime
+from models.multi_modality_model_hy import FeatureSpreadWTime
 import torch
 import time
 
